@@ -1,0 +1,1508 @@
+---
+title: "ETC5250 Assignment 2"
+author: "Dewi Lestari Amaliah - 31251587"
+date: "16/04/2021"
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_float : true
+    after_body: tutorial-footer.html
+    css: assignment.css
+    number_sections: no
+---
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE, 
+  collapse = TRUE,
+  echo = FALSE,
+  comment = "#",
+  fig.height = 4,
+  fig.width = 8,
+  fig.align = "center",
+  cache = FALSE
+)
+```
+
+
+```{r packages}
+library(tidyverse)
+library(tidymodels)
+library(discrim)
+library(MASS)
+library(broom)
+library(rpart)
+library(patchwork)
+library(caret)
+library(palmerpenguins)
+library(GGally)
+library(tourr)
+library(matlib)
+library(kableExtra)
+library(spinifex)
+library(boot)
+library(plotly)
+```
+
+
+
+# Question 1
+
+The lecture notes provide code to plot the QDA boundary between regions 2 and 3 of the olive oils data, using `linoleic` and `arachidic` acid. Use the same split of training and testing sets as used in lecture notes.
+
+```{r q1}
+# make a standardization function
+std <- function(x) (x-mean(x, na.rm=TRUE))/sd(x, na.rm=TRUE)
+
+# olive <- read_csv("http://ggobi.org/book/data/olive.csv") %>%
+#   dplyr::filter(region != 1) %>%
+#   dplyr::select(region, arachidic, linoleic, oleic) %>%
+#   dplyr::mutate(region = factor(region)) %>%
+#   #standardize the variable
+#   dplyr::mutate(arachidic_std = (arachidic - mean(arachidic))/ sd(arachidic),
+#          linoleic_std = (linoleic - mean(linoleic))/ sd(linoleic),
+#          oleic_std = (oleic - mean(oleic))/ sd(oleic))
+
+# read the data set
+olive <- read_csv("http://ggobi.org/book/data/olive.csv")
+
+# create a standardized variable data frame
+olive_std <- olive %>%
+  dplyr::filter(region != 1) %>%
+  dplyr::select(region, arachidic, linoleic, oleic) %>%
+  dplyr::mutate(region = factor(region)) %>%
+  #standardize the variable
+  mutate_if(is.numeric, std)
+  
+                
+# split the data into train and test
+set.seed(775)
+olive_split <- initial_split(olive_std, 2/3, strata = region)
+olive_train <- analysis(olive_split)
+olive_test <- assessment(olive_split)
+```
+
+
+## Question 1a
+
+**Write down the equation for discriminant function for region 2 as specified by QDA, using values computed from the data. (Use standardised variables.) Also, explain what assumption is not satisfied for QDA to be correctly applied for this data.**
+
+**Answer**
+
+The discriminant function of QDA for each class could be written as follow (James, Witten, Hastie, & Tibshirani, 2013):
+
+$$\delta_k(x) = -\frac12x^T\Sigma_k^{-1}x + x^T\Sigma_k^{-1}\mu_k - \frac12\mu_k^T\Sigma_k^{-1}\mu_k - \frac12 \log{|\Sigma_k|} + \log(\pi_k)$$
+Where:
+
+- $\Sigma_k$  is the variance-covariance matrix of class k. 
+- $\mu_k$ is the means for class k
+- $x$ is the array of the predictors
+- $\pi_k$ is the prior probability of class k 
+
+Using `qda` function from `MASS` (Venables & Ripley, 2002) we are able to get the $\mu_k$ and $\pi_k$ values. However, this function does not produce the value of $\Sigma_k$. Hence, we have to calculate it separately using the following formula (Lauer, 2014; Jones & Del Fiore, 2020):
+
+$$\hat\Sigma_k = \frac1{n_k -1}\sum_{y_i = k}(x_i - \hat{\mu})(x_i - \hat{\mu})^T$$
+Where :
+
+- $n_c$ is the number of observation in class k
+- $x_i$ is the array of the predictors for ith observation
+- $\hat{\mu}$ is the array of estimate means of class k
+
+
+**Prior probabilities and group means of region 1 and 2**
+
+```{r q1a}
+
+# perform the QDA
+olive_qda_fit <- qda(region ~ arachidic + linoleic, 
+      data = olive_train)
+
+olive_qda_fit
+```
+
+**Covariance matrix of Region 2**
+
+```{r sigma-matrix}
+
+# get the length of region 2 data
+nrow_reg2 <- olive_train %>%
+  filter(region == 2) %>%
+  nrow()
+
+# filter the train data to be only have region 2 
+reg2 <- olive_train %>%
+  filter(region == 2)
+
+# create the matrix of mu_hat for region 2
+mu_hat_2 <- as.matrix(c(olive_qda_fit[["means"]][1], olive_qda_fit[["means"]][3]))
+
+# calculate the covariance matrix for region 2 using the formula specified above.
+
+sum_matrix <- 0
+
+for(i in 1:nrow_reg2){
+    elem <- (as.matrix(c(reg2$arachidic[i], reg2$linoleic[i])) -
+                 mu_hat_2) %*% t(as.matrix(c(reg2$arachidic[i], reg2$linoleic[i])) -
+                 mu_hat_2)
+    sum_matrix <- sum_matrix + elem
+}
+
+sigma_2 <- (1/(nrow_reg2-1))*sum_matrix
+
+sigma_2
+```
+
+
+**Hence, the discriminant function for Region 2 based on QDA result is:**
+
+$$\delta_{region 2}(x) = -\frac12x^T\begin{bmatrix}0.1786 &  -0.0013\\
+-0.0013 & 0.1695
+\end{bmatrix}^{-1}x + x^T\begin{bmatrix}0.1786 &  -0.0013\\
+-0.0013 & 0.1695
+\end{bmatrix}^{-1}\begin{bmatrix}0.7483 \\
+1.0746
+\end{bmatrix}- \frac12\begin{bmatrix}0.7483 &
+1.0746
+\end{bmatrix}\\\begin{bmatrix}0.1786 &  -0.0013\\
+-0.0013 & 0.1695
+\end{bmatrix}^{-1}\begin{bmatrix}0.7483 \\
+1.0746
+\end{bmatrix} - \frac12 \log{|\begin{bmatrix}0.1786 &  -0.0013\\
+-0.0013 & 0.1695
+\end{bmatrix}|} + \log(0.3952)$$
+
+
+Or it could be written as follows:
+
+```{r}
+sigma2_inv <- Inverse(sigma_2)
+sigma2_inv_prod_mu_hat2 <- sigma2_inv %*% mu_hat_2
+mu_hat2_trans_prod_sigma2_inv_prod_mu_hat2 <- t(mu_hat_2) %*% sigma2_inv_prod_mu_hat2
+log_det_sigma2 <- log(det(sigma_2))
+```
+
+$$\delta_{region 2}(x) = -\frac12x^T\begin{bmatrix}5.5980 &  0.0430\\
+0.0430 & 5.8992
+\end{bmatrix}x + x^T\begin{bmatrix}4.24\\
+6.37
+\end{bmatrix} - \frac12(10) - \frac12 (-3.4972) - 0.9283$$
+
+or equal to:
+
+$$\delta_{region 2}(x) = -\frac12x^T\begin{bmatrix}5.5980 &  0.0430\\
+0.0430 & 5.8992
+\end{bmatrix}x + x^T\begin{bmatrix}4.24\\
+6.37
+\end{bmatrix} - 4.1797 $$
+
+
+
+
+*According to James, Witten, Hastie, and Tibshirani (2013), the QDA could be applied if the assumption that covariance matrix is equal for all of K classes is not satisfied. In other words, unlike Linear Discriminant Analysis (LDA), QDA is more flexible in assuming that covariance matrix for each class is different.*
+
+
+
+## Question 1b
+
+**Make similar plots that shows the boundary between the two regions, that would be produced by (i) linear discriminant analysis, (ii) classification tree (using `minsplit` of 10) using the `rpart` engine.**
+
+**Answer**
+
+The plots of boundary could be created using `ggplot` from `ggplot2` (Wickham, 2016). To make the boundary obviously seen, we have to create a grid first and predict the region over that grid. 
+
+```{r q1b}
+# fit the model of lda
+olive_lda_fit <- lda(region ~ arachidic + linoleic, data=olive_train)
+
+
+# create the grid to show boundary
+olive_grid <- expand_grid(arachidic = seq(-2.2, 2.2, 0.05),
+                    linoleic = seq(-2.2, 2.2, 0.05))
+
+# predict region using lda
+olive_grid <- olive_grid %>%
+  mutate(pred = predict(olive_lda_fit, olive_grid)$class)
+
+
+# fit the classification tree
+olive_fit_rp <- rpart(region ~ arachidic + linoleic, data=olive_train, 
+                 parms = list(split = "information"), 
+                 control = rpart.control(minsplit=10))
+
+# predict region sing classification tree
+olive_grid$pred_tree <- predict(olive_fit_rp, newdata=olive_grid, type="class")
+
+
+```
+
+
+```{r q1b-plot, fig.cap="Plot A shows the boundary between Region 2 and 3 based on LDA. Plot B shows the boundary between Region 2 and 3 based on classification tree. We can see that some observations are misclassified in both plots. We can also see that there is a slope in LDA boundary, whereas the boundary with classification tree is flat. Hence, we could imply that the decision boundary in LDA still take the two variables into account. Differently, the decision boundary in classification tree only takes the linoleic value into account."}
+
+# create the plot for LDA fit
+olive_lda_plot <- ggplot() +
+  geom_point(data=olive_grid, 
+             aes(x=arachidic, y=linoleic, colour=pred), 
+             size=0.5) + 
+  geom_point(data=olive_train, 
+             aes(x=arachidic, y=linoleic, shape=region),
+             size = 2, alpha=0.7) +
+  scale_colour_brewer(palette="Dark2") +
+  ylab("standardized linoleic") +
+  xlab("standardized arachidic") +
+  theme_bw() + theme(aspect.ratio=1, 
+                     legend.position = "bottom",
+                     plot.title = element_text(size = 10)) +
+  ggtitle("A) LDA fit")
+
+# create the plot for rpart fit
+olive_rpart_plot <- ggplot() +
+  geom_point(data=olive_grid, 
+             aes(x=arachidic, y=linoleic, colour=pred_tree), 
+             size=0.5) + 
+  geom_point(data=olive_train, 
+             aes(x=arachidic, y=linoleic, shape=region),
+             size = 2, alpha=0.7) +
+  scale_colour_brewer(palette="Dark2") +
+  ylab("standardized linoleic") +
+  xlab("standardized arachidic") +
+  theme_bw() + theme(aspect.ratio=1, 
+                     legend.position = "none",
+                     plot.title = element_text(size = 10)) +
+  ggtitle("B) Classification tree fit")
+
+
+# combine the twi plots
+olive_lda_plot + olive_rpart_plot
+```
+
+## Question 1c
+
+**Compute the test balanced accuracy for the three models (i) LDA, (ii) QDA, (iii) classification tree. Are they equally as accurate?**
+
+**Answer**
+
+Balanced accuracy could be calculated with the following formula (Cook, 2021a):
+
+$$balanced\:accuracy = \frac12(sensitivity + specificity)$$
+where:
+
+$$sensitivity = a/(a+c)\:(true\: positive)$$
+$$specificity = D/(b+d)\:(true\: negative)$$
+Hence, based on the formula above, we could first generate the confusion matrix of each model fit and calculate their balanced accuracy. 
+
+```{r 1c}
+# compute the prediction in test data for the three models an save it into a new data frame.
+
+# compute prediction of lda and qda
+olive_test_pred <- olive_test %>%
+  mutate(pred_lda = predict(olive_lda_fit, olive_test)$class,
+         pred_qda = predict(olive_qda_fit, olive_test)$class)
+# compute prediction for classification tree
+olive_test_pred$pred_tree <- predict(olive_fit_rp, newdata=olive_test, type="class")
+```
+
+
+**Balance accuracy for LDA fit**
+
+```{r q1c-lda}
+# get the confusion matrix
+conf_mat(olive_test_pred, region, pred_lda) 
+
+# calculate the sensitivity and specificity
+sensi_LDA <- 32/(32+0)
+speci_LDA <- 50/(50+0)
+
+# compute the balance accuracy
+ba_LDA <- (sensi_LDA + speci_LDA)/2 
+```
+
+
+$$sensitivity = 32/(32+0)$$
+$$specificity = 50/(50+0)$$
+$$balanced\:accuracy = (1+1)/2$$
+
+The balance accuracy for LDA fit is `r ba_LDA`
+
+**Balance accuracy for QDA fit**
+
+```{r q1c-qda}
+# get the confusion matrix
+conf_mat(olive_test_pred, region, pred_qda) 
+
+# calculate the sensitivity and specificity
+sensi_qda <- 32/(32+0)
+speci_qda <- 50/(50+0)
+
+#calculate balances accuracy
+ba_qda <- (sensi_qda + speci_qda)/2 
+```
+
+$$sensitivity = 32/(32+0)$$
+$$specificity = 50/(50+0)$$
+$$balanced\:accuracy = (1+1)/2$$
+
+The balance accuracy for QDA fit is `r ba_qda`
+
+
+**Balance accuracy for Classification Tree fit**
+
+```{r q1c-tree}
+# get the confusion matrix
+conf_mat(olive_test_pred, region, pred_tree) 
+
+#calculate sensitivity and specificity
+sensi_tree <- 32/(32+0)
+speci_tree <- 50/(50+0)
+
+#calculate balanced accuracy
+ba_tree <- (sensi_tree + speci_tree)/2 
+```
+
+$$sensitivity = 32/(32+0)$$
+$$specificity = 50/(50+0)$$
+$$balance\:accuracy = (1+1)/2$$
+
+The balance accuracy for classification tree fit is `r ba_tree`
+
+**Since the balance accuracy values for the three models are equal, we can conclude that they are equally as accurate.**
+
+## Question 1d
+
+**Re-fit the three models with the additional variable `oleic` (so you now have three predictors). Write a paragraph discussing how the models change, and why this might be.**
+
+**Answer**
+
+We can see how the model changes based on their predictors. The change of the model could be observed in the following tables. 
+
+```{r q1d}
+# fit the new lda
+olive_lda_fit_new <- lda(region ~ arachidic + linoleic + oleic, data=olive_train)
+
+# fit the new lda
+olive_qda_fit_new <- qda(region ~ arachidic + linoleic + oleic, data=olive_train)
+
+# fit the new classification tree
+olive_fit_rp_new <- rpart(region ~ arachidic + linoleic + oleic , data=olive_train, 
+                 parms = list(split = "information"), 
+                 control = rpart.control(minsplit=10))
+
+# compute the new prediction values of the new model.
+olive_test_pred <- olive_test %>%
+  mutate(pred_lda2 = predict(olive_lda_fit_new, olive_test)$class,
+         pred_qda2 = predict(olive_qda_fit_new, olive_test)$class)
+
+olive_test_pred$pred_tree2 <- predict(olive_fit_rp_new, newdata=olive_test, type="class")
+```
+
+**LDA: Old vs New**
+
+```{r results='hide'}
+olive_lda_fit
+olive_lda_fit_new
+```
+
+
+
+```{r results='hide'}
+# calculate baance accuracy for lda model
+confusionMatrix(olive_test_pred$pred_lda2, olive_test_pred$region)
+```
+
+```{r q1d-comp-lda}
+# create a data frame to show the models' properties
+# the LDA1 equation is produced from the model fit
+
+lda_com <- data.frame(model = c("lda(region = arachidic + linoleic)", "lda(region = arachidic + linoleic + oleic)"),
+                      accuracy = c(1, 1),
+                      coeffients = c("LD1 = -0.9183*arachidic - 2.0375*linoleic",
+                                     "LD1 = -1.0739*arachidic - 2.8248*linoleic - 0.8577*oleic"))
+
+kable(lda_com, caption = "Comparison between 2 LDA model") %>%
+  kable_styling()
+```
+
+**QDA: Old vs New**
+
+```{r results='hide'}
+# calculate balance accuracy for qda
+confusionMatrix(olive_test_pred$pred_qda2, olive_test_pred$region)
+```
+
+
+
+```{r q1d-comp-qda}
+
+qda_com <- data.frame(model = c("qda(region = arachidic + linoleic)", "qda(region = arachidic + linoleic + oleic)"),
+                      accuracy = c(1, 0.99))
+
+kable(qda_com, caption = "Comparison between 2 QDA model") %>%
+  kable_styling()
+
+```
+
+**Classification Tree: Old vs New**
+
+```{r results='hide'}
+olive_fit_rp
+olive_fit_rp_new
+```
+
+
+```{r}
+tree_com <- data.frame(model = c("rpart(region = arachidic + linoleic)", "rpart(region = arachidic + linoleic + oleic)"),
+                      accuracy = c(1, 1),
+                      rule = c("linoleic>=0.537 classified to region 2",
+                               "linoleic>=0.537 classified to region 2"))
+
+kable(tree_com, caption = "Comparison between 2 classification tree") %>%
+  kable_styling()
+```
+
+**Discussion**
+
+From the tables above, we learn that the coefficients of discriminant space of the LDA model have changed when `oleic` included in the model. However, the contribution of this variable is minor compared to the other variable (only 0.86). Hence the accuracy of the model does not change, i.e., still perfectly accurate to predict the test data. Regarding the classification tree, the model's accuracy also does not change (the accuracy is 1 for the two models). It is because the classification rule does not change either. In these models, `linoleic` is used to decide whether an observation belongs to region 2 or 3. The accuracy of the model only changes in QDA, where adding `oleic` decreases the accuracy by about 1 percent. It is probably because the relationship between `linoleic` and `oleic` is linear, as seen in Figure 2. Hence, QDA does not work pretty well.
+
+
+```{r q1d-plot, fig.cap="The scatter plot of three variables in the new model. We could see that there is a linear relationship between linoleic and oleic."}
+ggscatmat(olive_train, c(2:4), color = "region") +
+  scale_colour_brewer(palette="Dark2")
+```
+
+
+
+
+# Question 2
+
+The `palmerpenguins` is a new R data package, with interesting measurements on penguins of three different species. Subset the data to contain just the Adelie and Gentoo species, and only the variables species and the four physical size measurement variables.
+
+
+
+```{r pp-data}
+# load the penguin data, filter out Chinstrap and select only 4 variables
+penguin <- penguins %>%
+  dplyr::filter(species != "Chinstrap") %>%
+  dplyr::select(species, bill_length_mm:body_mass_g) 
+
+# drop chinstrap level
+penguin <- droplevels(penguin)
+
+# standardize the data
+penguins_std <- penguin %>%
+  mutate_if(is.numeric, std) %>%
+  drop_na() %>%
+  rename(bl = bill_length_mm,
+         bd = bill_depth_mm,
+         fl = flipper_length_mm,
+         bm = body_mass_g)
+
+```
+
+## Question 2a
+
+**Make a scatterplot matrix of the data, with species mapped to colour. Which variables would you expect to be the most important for distinguishing between the species? Is it fair to assume homogeneous variance-covariances?**
+
+**Answer**
+
+```{r q2a, fig.cap="The scatterplot matrix of 4 variables used in distinguish Adelie and Gentoo species. The green colour indicates Adelie species, while orange indicates Gentoo. We can see that the relationship between variables pretty linear. Some outliers in each species also could be observed in this plot."}
+ggscatmat(penguins_std, columns = 2:5, color="species") +
+  scale_colour_brewer(palette="Dark2")
+```
+
+         
+Figure \@ref(fig:q2a) indicates that bill depth (`bd`) could be the most important variables to distinguish Adelie and Gentoo as this variable could separate the species well. We can see that any variables that are paired with `bd` will show a good separation between the two species. 
+
+Yes, it is. If the data have the same shape, means that we can assume that they share a common variance-covariance matrix. Figure \@ref(fig:q2a) shows that the two species have relatively same shape. Thus, we could assume that they have the same variance-covariance. 
+
+## Question 2b
+
+**Break the data into training and test sets. Fit an LDA model to the data, assuming equal prior probabilities for the two groups. Report confusion table and the misclassification error for the test set.** 
+
+**Answer**
+
+```{r peng-split}
+
+#set the seed
+set.seed(775)
+
+# make the split rule
+penguin_split <- initial_split(penguins_std, 2/3, strata = species)
+
+# make train data
+penguin_train <- analysis(penguin_split)
+
+# make test data
+penguin_test <- assessment(penguin_split)
+```
+
+**The LDA fit model**
+
+
+```{r peng-lda}
+
+# set the nengine of lda
+lda_mod <- discrim_linear() %>% 
+  set_engine("MASS", prior = c(0.5, 0.5)) %>% 
+  translate()
+
+# fitting the model
+penguin_lda_fit <- 
+  lda_mod %>% 
+  fit(species ~ ., 
+      data = penguin_train)
+penguin_lda_fit
+
+```
+**The confusion matrix**
+
+```{r peng-accuracy}
+
+# create prediction data
+penguin_test_pred <- penguin_test %>%
+  mutate(pred = predict(penguin_lda_fit, penguin_test)$.pred_class)
+
+# generate confusion matrix for test data
+conf_mat(penguin_test_pred, species, pred)
+```
+
+From the confusion table above, we could see that all of the observations in the test data are correctly classified to Adelie and Gentoo species. Hence, the missclasification error in this case is 0. 
+
+## Question 2c
+
+**Write down the LDA rule, for classifying the two species, explicitly being clear about which species is class 1 and which is class 2.**
+
+**Answer**
+
+```{r pooled-cov-var}
+# create a matrix of adelie group means
+mu_hat_adelie <- as.matrix(c(penguin_lda_fit[["fit"]][["means"]][1],
+                             penguin_lda_fit[["fit"]][["means"]][3],
+                             penguin_lda_fit[["fit"]][["means"]][5], 
+                             penguin_lda_fit[["fit"]][["means"]][7]))
+
+# create a matrix of gentoo group means
+mu_hat_gentoo <- as.matrix(c(penguin_lda_fit[["fit"]][["means"]][2],
+                             penguin_lda_fit[["fit"]][["means"]][4],
+                             penguin_lda_fit[["fit"]][["means"]][6], 
+                             penguin_lda_fit[["fit"]][["means"]][8]))
+
+# filter the data to only have adelie species
+adelie <- penguin_train %>%
+  dplyr::filter(species == "Adelie")
+
+# filter the data to only have gentoo species
+gentoo <- penguin_train %>%
+  dplyr::filter(species == "Gentoo")
+
+# get the variance covariance matrix of adelie class
+sum_adelie <- 0
+for(i in 1:nrow(adelie)){
+    elem_adelie <- (as.matrix(c(adelie$bl[i], adelie$bd[i], adelie$fl[i], adelie$bm[i])) -
+               mu_hat_adelie) %*% 
+      t(as.matrix(c(adelie$bl[i], adelie$bd[i], adelie$fl[i], adelie$bm[i])) -
+                 mu_hat_adelie)
+    sum_adelie <- sum_adelie + elem_adelie
+}
+
+sigma_hat_adelie <- 1/(nrow(adelie) - 1)*sum_adelie
+
+# get the variance covariance matrix of gentoo class
+sum_gentoo <- 0
+for(i in 1:nrow(gentoo)){
+    elem_gentoo <- (as.matrix(c(gentoo$bl[i], gentoo$bd[i], gentoo$fl[i], gentoo$bm[i])) -
+               mu_hat_gentoo) %*% 
+      t(as.matrix(c(gentoo$bl[i], gentoo$bd[i], gentoo$fl[i], gentoo$bm[i])) -
+                 mu_hat_gentoo)
+    sum_gentoo <- sum_gentoo + elem_gentoo
+}
+
+sigma_hat_gentoo <- 1/(nrow(gentoo) - 1)*sum_gentoo
+
+# create the numerator to be fed to pooled variance formula
+n_sigma_hat_adelie <- (nrow(adelie)-1)*sigma_hat_adelie 
+n_sigma_hat_gentoo <- (nrow(gentoo)-1)*sigma_hat_gentoo
+
+# calculate the pooled variance covariance matrix
+peng_pooled_cov_var <- (n_sigma_hat_adelie+n_sigma_hat_gentoo)/(nrow(adelie)+nrow(gentoo)-2)
+
+peng_pooled_cov_var_inv <- Inverse(peng_pooled_cov_var)
+```
+
+
+```{r }
+# left hand side of the equation
+comp_a <- peng_pooled_cov_var_inv %*% (mu_hat_gentoo - mu_hat_adelie)
+
+# right hand side of the equation
+comp_b <- 0.5*t(mu_hat_gentoo+mu_hat_adelie)%*%comp_a
+
+```
+
+
+When a case has 2 classes and the prior probability of each class is equal, the observation is assigned to class 1 according to the equation as follows (Cook, 2021b):
+
+$$x_0^T\Sigma^{-1}(\mu_1-\mu_2) > \frac{1}{2}(\mu_1+\mu_2)^T\Sigma^{-1}(\mu_1-\mu_2)$$
+or
+$$x_0^T\Sigma^{-1}(\mu_1-\mu_2) - \frac{1}{2}(\mu_1+\mu_2)^T\Sigma^{-1}(\mu_1-\mu_2) > 0$$
+Where:
+
+- $\mu_1$ is the group means for class 1
+- $\mu_2$ is the group means for class 2
+- $\Sigma^{-1}$ is the inverse of the pooled variance-covariance matrix
+
+The formula of pooled variance-covariance matrix is :
+
+$$\hat\Sigma_p = \frac{(n_1-1)\hat\Sigma_1 + (n_2-1)\hat\Sigma_2 + ... + (n_k-1)\hat\Sigma_k}{n_1 + n_2 + ... + n_k -k}$$
+
+
+For this data set, the class 1 is `gentoo` species and class 2 is `adelie` species. Hence, the LDA rule could be written as follow:
+
+**An observation would be classified as Gentoo if:**
+
+$$x_0^T\begin{bmatrix}5.7659\\
+-16.3360\\
+11.7811\\
+7.5679
+\end{bmatrix} - 3.44 > 0$$
+
+Or could be written as:
+
+$$5.7659bl - 16.3360bd + 11.7811fl + 7.5679bm - 3.44 > 0$$
+
+**An observation would be classified as Adelie if:**
+
+$$x_0^T\begin{bmatrix}5.7659\\
+-16.336\\
+11.7811\\
+7.568
+\end{bmatrix} - 3.44 <= 0$$
+
+Or:
+$$5.7659bl - 16.3360bd + 11.7811fl + 7.5679bm - 3.44 <= 0$$
+
+
+## Question 2d
+
+**Report the group means and the pooled variance-covariance matrix, and show the computations to obtain the linear discriminant space is computed from these.**
+
+**Answer**
+
+The group means could be obtained from the output of `lda` fit. For this case, the group means is:
+
+```{r}
+penguin_lda_fit$fit[3]
+```
+
+While the pooled variance-covariance matrix is:
+
+$$\hat\Sigma_p = \begin{bmatrix}0.2776 & 0.1497 & 0.1010 & 0.1760\\
+0.1497 & 0.3233 & 0.1057 & 0.2031\\
+0.1010 & 0.1057 & 0.1680 & 0.1299\\
+0.1760 & 0.2031 & 0.1299 & 0.3170
+\end{bmatrix}$$
+
+
+Further, the computation of discriminant space for this data could be performed by following this formula (Cook, 2021b):
+
+$$\Sigma^{-1}(\mu_1-\mu_2) $$
+
+In this case, the inverse of pooled variance-covariance matrix is:
+
+$$\hat\Sigma^{-1} = \begin{bmatrix}5.9716 & -0.9908 & -1.3115 & -2.1428\\
+-0.9908  & 5.4608 & -0.8209 & -2.6125\\
+-1.3115 & -0.8209 & 9.2059 & -2.5189\\
+-2.1428 & -2.6125 & -2.5189  & 7.0509
+\end{bmatrix}$$
+
+And
+
+$$\hat\mu_1-\hat\mu_2 = \begin{bmatrix}1.6768 \\
+-1.6361 \\
+1.8176 \\
+1.6260
+\end{bmatrix}$$
+
+
+In R, the code to obtain this discriminant space is:
+
+```{r q2d, echo = TRUE}
+# Discriminant space 
+disc_space <- peng_pooled_cov_var_inv %*% (mu_hat_gentoo - mu_hat_adelie)
+```
+
+Hence, the discriminant space is :
+
+$$\hat\Sigma^{-1}(\hat\mu_1-\hat\mu_2) = \begin{bmatrix}5.7659 \\
+-16.3360 \\
+11.7811 \\
+7.5679
+\end{bmatrix}$$
+
+Further, I normalized discriminant vector as shown above to obtain spherical within group covariance matrix as is done in MASS's `lda` function. The code to perform this is displayed as follows:
+
+```{r q2d-normlaized, echo=TRUE}
+# in order to have a spherical within groups covariance matirx, the discriminant space should be normalized 
+v_scalar = sqrt(t(disc_space) %*% peng_pooled_cov_var %*% disc_space)
+LD <- disc_space/drop(v_scalar)
+```
+
+Finally the result of disctiminant coefficient is:
+
+$$LD = \begin{bmatrix}0.6886 \\
+-1.9509 \\
+1.4069 \\
+0.9038
+\end{bmatrix}$$
+
+
+
+## Question 2e
+
+**Make a plot showing the data in the discriminant space, to examine how well the species are separated.**
+
+**Answer**
+
+Since we only have 2 classes, we will only have 1 discriminant space. Hence, we could make a dotplot with LD on the x-axis and species on the y-axis then color it by the species. 
+
+We can see in Figure \@ref(fig:q2e) that Adelie and Gentoo are well separated. We learn that when LD is negative, the penguins are classified as Adelie. In contrast, when LD is positive, the Penguins are classified as Gentoo. 
+
+
+```{r q2e, fig.cap="Adelie and Gentoo distributed in discriminant space. We can see that the two species are well-separated."}
+
+# compute the value of observations in discriminant space
+penguin_tr_dic <- penguin_train %>%
+  mutate(LD = (LD[1]*bl) +
+           (LD[2]*bd) +
+           (LD[3]*fl) +
+           (LD[4]*bm))
+
+# make the plot showing the data in discriminant space
+ggplot(penguin_tr_dic) +
+  geom_point(aes(x = LD, y = species, color = species)) +
+  theme(aspect.ratio=1) +
+  scale_color_brewer(palette="Dark2")
+```
+
+## Question 2f
+
+**Return to the data with the original three species of penguins. Conduct LDA for the three groups, and obtain the 2D discriminant space, using just the same four physical measurements. Using the tour, determine which of the variables are most important for distinguishing Chinstrap penguins from Adelie. Provide a plot or two to support your decision.**
+
+**Answer**
+
+**LDA for the three species and its discriminant space**
+
+```{r q2f}
+# put back Chinstrap to data set
+penguin_new <- penguins %>%
+  dplyr::select(species, bill_length_mm:body_mass_g)
+
+penguin_new$species <- factor(penguin_new$species, levels = c("Adelie", "Gentoo", "Chinstrap"))
+
+# standardize the data
+penguins_std_new <- penguin_new %>%
+  mutate_if(is.numeric, std) %>%
+  drop_na() %>%
+  rename(bl = bill_length_mm,
+         bd = bill_depth_mm,
+         fl = flipper_length_mm,
+         bm = body_mass_g)
+
+## break the data into train and test
+
+#set the seed
+set.seed(775)
+
+# make the split rule
+penguin_split_new <- initial_split(penguins_std_new, 2/3, strata = species)
+
+# make train data
+penguin_train_new <- analysis(penguin_split_new)
+
+# make test data
+penguin_test_new <- assessment(penguin_split_new)
+
+
+## doing lda
+
+penguin_lda_new_fit <- 
+  lda(species ~ ., 
+      data = penguin_train_new,
+      prior = c(1,1,1)/3)
+
+## create the plot of 2D LDA
+
+penguin_lda_space <- bind_cols(penguin_train_new,
+                               as_tibble(predict(penguin_lda_new_fit, penguin_train_new)$x))
+
+penguin_lda_new_fit
+```
+
+From the output above, we obtain the discriminant vector of LD1 and LD2 shown by the coefficients of linear discriminant. Hence, we can make the 2D plot of the discriminant space as follows: 
+
+```{r q2f-plot, fig.cap="Linear discriminant space plotted in 2D dimension. Gentoo onservations are more distinguishable compared to the other species."}
+ggplot(penguin_lda_space) +
+  geom_point(aes(x = LD1,
+                 y = LD2,
+                 color = species)) +
+  theme(aspect.ratio=1) +
+  scale_color_brewer(palette="Dark2")
+
+```
+
+We can learn from Figure \@ref(fig:q2f-plot) that LD1 separates the Gentoo with the two species very well. Adelie and Chinstrap are mixed up in LD1 space, while we can see they are separated in LD2 space. 
+
+**Play the manual tour**
+
+In order to know what variable that separate Adelie and Chinstrap very well, we can play the manual tour as is seen in Figure \@ref(fig:manual-tour).
+
+```{r manual-tour, fig.cap="Visualisation of four predictor variables. By clicking the play button, we can see how the observations move in the space. In this plot, Gentoo, Adelie, and Chinstrap are displayed in the Orang, Green, and Purple dots respectively. We learn that 'bd' separates Gentoo from Adelie and Chinstrap. On the other axis, 'bl' separates Adelie and Chinstrap."}
+
+bas <- penguin_lda_new_fit[["scaling"]]
+
+play_manual_tour(bas, penguins_std_new[,2:5], 2, 
+                 aes_args = list(color = penguins_std_new$species))
+```
+
+
+> From Figure \@ref(fig:manual-tour) we learn that Bill Length (BL) is the most important variable that distinguish Chinstrap from Adelie.
+
+# Question 3
+
+Impurity metrics can be other than Gini or entropy. This is a metric proposed by [Buja and Lee (2001)](https://repository.upenn.edu/cgi/viewcontent.cgi?article=1406&context=statistics_papers) is called a one-sided extreme:
+
+$$OSE = 1-max(\hat{p}_L^1, \hat{p}_R^1)$$
+
+
+## Question 3a
+
+**Read in the spam data, set the levels for day of the week, and filter to the five most common domains, "com", "edu", "net", "org", "gov". Drop variable spampct, because there are many missing values. (This variable was one that some of the mail software provided as a probability that the email was spam. Most mail software didn't provide this.) Class 1 for this data would be `spam=no`. Explain why.**
+
+**Answer**
+
+```{r load-spam-data}
+spam <- read_csv("http://ggobi.org/book/data/spam.csv") %>%
+  mutate(`day of week` = factor(`day of week`, 
+              levels=c("Mon", "Tue", "Wed", "Thu", 
+                       "Fri", "Sat", "Sun"))) %>%
+  filter(domain %in% c("com", "edu", "net", "org", "gov")) %>%
+  dplyr::select(-spampct)
+```
+**Class 1 for this data would be `spam=no` because we want to build a spam filter. Hence our group of interest is the emails that are not spam.**
+
+## Question 3b
+
+**Considering only the domain variable, what would be all of the possible splits? Compute OSE for each possible split, and report the best split, by hand.**
+
+**Answer**
+
+```{r q3b}
+# select only domain and spam column
+dom <- spam %>%
+  dplyr::select(domain, spam) %>%
+  mutate(domain = factor(domain, levels = c("com", "edu", "net", "org", "gov")),
+         spam = ifelse(spam == "no", 1, 0)) %>%
+  mutate(spam = factor(spam, levels = c(1, 0)))
+
+# group the data based on domain and spam
+dom_cl <- dom %>%
+  group_by(domain, spam) %>%
+  count()
+```
+
+
+The number of possible splits of classification tree with categorical predictors are $2^{k-1} -1$ (Hoare, n.d.). Hence, if we plug our data into this criteria, since we have 5 class, the number of possible split would be $2^{4} -1$ = 15. They are:
+
+1. split 1: com -- edu, net, org, gov
+2. split 2: edu -- com, net, org, gov
+3. split 3: net -- com, edu, org, gov
+4. split 4: org -- com, edu, net, gov
+5. split 5: gov -- com, edu, net, org
+6. split 6: com, edu -- net, org, gov
+7. split 7: com, net -- edu, org, gov
+8. split 8: com, org -- edu, net, gov
+9. split 9: com, gov -- edu, net, org
+10. split 10: edu, net -- com, org, gov
+11. split 11: edu, org -- com, net, gov
+12. split 12: edu, gov -- com, net, org
+13. split 13: net, org -- com, edu, gov
+14. split 14: net, gov -- com, edu, org
+15. split 15: org, gov -- com, edu, net
+
+Before creating the possible splits and computing the OSE, I split the data into each class using `split` function (R Core Team, 2020). After that, I made a function to create the left and right bucket of the data as displayed as follows:
+
+```{r q3b-1, echo = TRUE}
+# split the data
+dom_split <- split(dom_cl, dom_cl$domain)
+
+# make a function to make data frame for every split
+Y <- lapply(seq_along(dom_split), function(x) as.data.frame(dom_split[[x]])[, 1:3])
+
+# create the data frame 
+com <- Y[[1]]
+edu <- Y[[2]]
+net <- Y[[3]]
+org <- Y[[4]]
+gov <- Y[[5]]
+```
+
+
+```{r echo = TRUE}
+# function to bind the data into each bucket
+get_bind <- function(...){
+  rbind(...) %>%
+    mutate(sum_email = sum(n)) %>%
+    filter(spam == 1)
+}
+```
+
+
+Next, the OSE for each split could be calculated by hand as shown as follows. Note that for the lengthy of the report, I will just show some sample code of the calculation. The rest code is available in the Rmd file of this report. 
+
+
+```{r echo = TRUE}
+# **Split 1 : com vs edu, net, org, gov**
+# left bucket is com
+# right bucket is 
+rb_1 <- get_bind(edu, net, org, gov)
+
+# probability in left and right bucket
+pl_s1 <- com$n[1]/sum(com$n)
+pr_s1 <- sum(rb_1$n)/rb_1$sum_email[1]
+
+# compute OSE
+OSE1 <- 1 - max(pl_s1, pr_s1)
+```
+
+
+
+```{r echo=TRUE}
+# **Split 2 : edu vs com, net, org, gov**
+# left bucket is edu
+# right bucket is
+rb_2 <- get_bind(com, net, org, gov)
+
+# probability in left and right bucket
+pl_s2 <- edu$n[1]/sum(edu$n)
+pr_s2 <- sum(rb_2$n)/rb_2$sum_email[1]
+
+# compute OSE
+OSE2 <- 1 - max(pl_s2, pr_s2)
+```
+
+
+
+```{r}
+# **Split 3: net vs com, edu, org, gov**
+# left bucket is net
+# right bucket is 
+rb_3 <- get_bind(com, edu, org, gov)
+
+# probability in left and right bucket
+pl_s3 <- net$n[1]/sum(net$n)
+pr_s3 <- sum(rb_3$n)/rb_3$sum_email[1]
+
+# compute OSE
+OSE3 <- 1 - max(pl_s3, pr_s3)
+```
+
+
+
+
+```{r}
+# **Split 4: org vs com, edu, net, gov**
+# left bucket is org
+# right bucket is 
+rb_4 <- get_bind(com, edu, net, gov)
+
+# probability in left and righ bucket
+pl_s4 <- org$n[1]/sum(org$n)
+pr_s4 <- sum(rb_4$n)/rb_4$sum_email[1]
+
+# compute OSE
+OSE4 <- 1 - max(pl_s4, pr_s4)
+```
+
+
+
+
+```{r}
+# **Split 5: gov vs com, edu, net, org**
+# left bucket is gov
+# right bucket is 
+rb_5 <- get_bind(com, edu, net, org)
+
+# probability in left and righ bucket
+pl_s5 <- gov$n[1]/sum(gov$n)
+pr_s5 <- sum(rb_5$n)/rb_5$sum_email[1]
+
+# compute OSE
+OSE5 <- 1 - max(pl_s5, pr_s5)
+```
+
+
+
+
+```{r echo = TRUE}
+#**Split 6: com, edu vs net, org, gov**
+# left bucket is 
+lb_6 <- get_bind(com, edu)
+# right bucket is 
+rb_6 <- get_bind(net, org, gov)
+
+# probability in left and righ bucket
+pl_s6 <- sum(lb_6$n)/lb_6$sum_email[1]
+pr_s6 <- sum(rb_6$n)/rb_6$sum_email[1]
+
+# compute OSE
+OSE6 <- 1 - max(pl_s6, pr_s6)
+```
+
+
+```{r}
+# **Split 7: com, net vs edu, org, gov**
+# left bucket is 
+lb_7 <- get_bind(com, net)
+# right bucket is 
+rb_7 <- get_bind(edu, org, gov)
+
+# probability in left and righ bucket
+pl_s7 <- sum(lb_7$n)/lb_7$sum_email[1]
+pr_s7 <- sum(rb_7$n)/rb_7$sum_email[1]
+
+# compute OSE
+OSE7 <- 1 - max(pl_s7, pr_s7)
+```
+
+
+
+```{r}
+# **Split 8: com, org vs edu, net, gov**
+# left bucket is 
+lb_8 <- get_bind(com, org)
+# right bucket is 
+rb_8 <- get_bind(edu, net, gov)
+
+# probability in left and righ bucket
+pl_s8 <- sum(lb_8$n)/lb_8$sum_email[1]
+pr_s8 <- sum(rb_8$n)/rb_8$sum_email[1]
+
+# compute OSE
+OSE8 <- 1 - max(pl_s8, pr_s8)
+```
+
+
+
+```{r}
+# **Split 9: com, gov vs edu, net, org**
+# left bucket is 
+lb_9 <- get_bind(com, gov)
+# right bucket is 
+rb_9 <- get_bind(edu, net, org)
+
+# probability in left and righ bucket
+pl_s9 <- sum(lb_9$n)/lb_9$sum_email[1]
+pr_s9 <- sum(rb_9$n)/rb_9$sum_email[1]
+
+# compute OSE
+OSE9 <- 1 - max(pl_s9, pr_s9)
+```
+
+
+
+```{r}
+# **Split 10: edu, net vs com, org, gov**
+# left bucket is 
+lb_10 <- get_bind(edu, net)
+# right bucket is 
+rb_10 <- get_bind(com, org, gov)
+
+# probability in left and righ bucket
+pl_s10 <- sum(lb_10$n)/lb_10$sum_email[1]
+pr_s10 <- sum(rb_10$n)/rb_10$sum_email[1]
+
+# compute OSE
+OSE10 <- 1 - max(pl_s10, pr_s10)
+```
+
+
+
+```{r}
+# **Split 11: edu, org vs com, net, gov**
+# left bucket is 
+lb_11 <- get_bind(edu, org)
+# right bucket is 
+rb_11 <- get_bind(com, net, gov)
+
+# probability in left and righ bucket
+pl_s11 <- sum(lb_11$n)/lb_11$sum_email[1]
+pr_s11 <- sum(rb_11$n)/rb_11$sum_email[1]
+
+# compute OSE
+OSE11 <- 1 - max(pl_s11, pr_s11)
+```
+
+
+```{r}
+# **Split 12: edu, gov vs com, net, org**
+# left bucket is 
+lb_12 <- get_bind(edu, gov)
+# right bucket is 
+rb_12 <- get_bind(com, net, org)
+
+# probability in left and righ bucket
+pl_s12 <- sum(lb_12$n)/lb_12$sum_email[1]
+pr_s12 <- sum(rb_12$n)/rb_12$sum_email[1]
+
+# compute OSE
+OSE12 <- 1 - max(pl_s12, pr_s12)
+```
+
+
+
+```{r}
+# **Split 13: net, org vs com, edu, gov**
+# left bucket is 
+lb_13 <- get_bind(net, org)
+# right bucket is 
+rb_13 <- get_bind(com, edu, gov)
+
+# probability in left and righ bucket
+pl_s13 <- sum(lb_13$n)/lb_13$sum_email[1]
+pr_s13 <- sum(rb_13$n)/rb_13$sum_email[1]
+
+# compute OSE
+OSE13 <- 1 - max(pl_s13, pr_s13)
+```
+
+
+```{r}
+# **Split 14: net, gov vs com, edu, org**
+# left bucket is 
+lb_14 <- get_bind(net, gov)
+# right bucket is 
+rb_14 <- get_bind(com, edu, org)
+
+# probability in left and righ bucket
+pl_s14 <- sum(lb_14$n)/lb_14$sum_email[1]
+pr_s14 <- sum(rb_14$n)/rb_14$sum_email[1]
+
+# compute OSE
+OSE14 <- 1 - max(pl_s14, pr_s14)
+```
+
+
+```{r echo = TRUE}
+# **Split 15: org, gov vs com, edu, net**
+# left bucket is 
+lb_15 <- get_bind(org, gov)
+# right bucket is 
+rb_15 <- get_bind(com, edu, net)
+
+# probability in left and righ bucket
+pl_s15 <- sum(lb_15$n)/lb_15$sum_email[1]
+pr_s15 <- sum(rb_15$n)/rb_15$sum_email[1]
+
+# compute OSE
+OSE15 <- 1 - max(pl_s15, pr_s15)
+```
+
+
+Finally the OSE for each possible split could be seen in the following table. The OSEs value have been ordered from lowest to highest. 
+
+```{r ose-tab}
+ose_table <- data.frame(SPLIT = c("split 1", "split 2", "split 3", "split 4", "split 5",
+                                 "split 6", "split 7", "split 8", "split 9", "split 10",
+                                 "split 11", "split 12", "split 13", "split 14", "split 15"),
+                       OSE= c(OSE1, OSE2, OSE3, OSE4, OSE5, 
+                              OSE6, OSE7, OSE8, OSE9, OSE10,
+                              OSE11, OSE12, OSE13, OSE14, OSE15)) %>%
+  arrange(OSE)
+
+kable(ose_table, caption = "OSE value of each possible split.",
+      digits = 4) %>%
+  kable_styling()
+```
+
+**Based on Table \@ref(tab:ose-tab), the best split is split 2, which contains `edu` in the left bucket and  `com, net, org, gov` in the right bucket.**
+
+## Question 3c
+
+**Write a function to compute OSE, given a numeric variable. It needs to have an option for minimum split, so that you can restrict the minimum size for each subset. At what value would of `size.kb` would the split be made? (Using a minimum split value of 10.)**
+
+**Answer**
+
+The function could be seen in the following code chunk:
+
+```{r q3c, echo = TRUE}
+# this function takes three argument:
+# x : the vector of predictors
+# y : the vector of response
+# minbucket: the minimum size of each subset, the default value is 10
+
+
+best_split <- function(x, y, minbucket = 10){
+  
+  # create a data frame from x and y and arrange it according to x value
+  df <- tibble(x = x, y = y) %>% arrange(x)
+  
+  # get the unique value of x to create the length of splits
+  splits <- unique(df$x)
+  
+  # the number of splits would be the length of splits - 1
+  
+  # make a place holder vector for the OSE value
+  ose <- numeric(length(splits)-1)
+  # make a place holder vector for the size of left bucket
+  size_left <- numeric(length(splits)-1)
+  # make a place holder vector for the size of right bucket
+  size_right <- numeric(length(splits)-1)
+  # make a place holder vector for the splitting criteria
+  split_crit <- numeric(length(splits)-1)
+  
+  # define the minimum bucket 
+  minbucket = minbucket
+  
+  # compute the OSE for each possible split using iteration
+  for(i in 1:(length(splits)-1)){
+    
+    # assign data to the left bucket 
+    # the splitting criteria would be (splits[i]+splits[i+1])/2
+    lb <- df %>% filter(x < (splits[i]+splits[i+1])/2)
+    
+    # assign data to the right bucket
+    rb <- df %>% filter(x >= (splits[i]+splits[i+1])/2)
+    
+    # get the vector of response in the left bucket
+    left_vector <- lb$y 
+    # get the vector of response in the right bucket
+    right_vector <- rb$y
+    
+    # compute the probability of 'no' in the left bucket
+    pl <- length(left_vector[left_vector == "no"])/length(left_vector)
+    
+    # compute the probability of 'no' in the right bucket
+    pr <- length(right_vector[right_vector == "no"])/length(right_vector)
+    
+    # compute OSE for each split
+    ose[i] <- 1 - max(pl, pr)
+    
+    # calculate the size of left bucket
+    size_left[i] <- nrow(lb)
+    
+    # calculate the size of right bucket
+    size_right[i] <- nrow(rb)
+    
+    # modify the split_crit vector by the criteria of split
+    split_crit[i] <- (splits[i]+splits[i+1])/2
+    
+  }
+  
+  # create a tibble consist of the four vectors
+  ose_tibble <- tibble(split_crit, ose, size_left, size_right) %>%
+    # filter the split that only contains the minimum bucket size
+    filter(size_left>=minbucket & size_right>=minbucket) 
+  
+  # get the row of best split by the minimum OSE
+  ose_best <- ose_tibble %>%
+    filter(ose == min(ose))
+  
+  # this function will return a list of list
+  # first component of the list is the list of OSE of each split
+  # second component of the list is the split criteria of best split
+  # third component of the list is the value of minimum OSE
+  return(c(list(ose_tibble$ose), list(ose_best$split_crit[1], list(ose_best$ose[1]), list(ose_tibble$split_crit))))
+  
+}
+
+```
+
+
+
+```{r q3c1}
+sizekb_split <- best_split(spam$`size.kb`, spam$spam, 10)[[2]]
+```
+
+
+> Based on the minimum OSE, the best split for `size.kb` would be made at `r sizekb_split`.
+
+In details, there are `r length(best_split(spam$size.kb, spam$spam, 10)[[2]])` splits for `size.kb`. The value of splits could be seen as follows:
+
+```{r}
+best_split(spam$`size.kb`, spam$spam, 10)[[4]]
+```
+
+## Question 3d
+
+**Use your function to compute OSE for each possible split for the other numeric variables (time of day, digits, cappct, special). Which of these would produce the best split? And what is the split?**
+
+**Answer**
+
+```{r var-split}
+# time of day
+timeday_split <- best_split(spam$`time of day`, spam$spam)
+
+# digits
+digits_split <- best_split(spam$digits, spam$spam)
+
+# cappct
+cap_split <- best_split(spam$cappct, spam$spam)
+
+# special
+special_split <- best_split(spam$special, spam$spam)
+
+# split crteria of best OSE
+split_crit_bob <- c(timeday_split[[2]], 
+                    digits_split[[2]],
+                    cap_split[[2]],
+                    special_split[[2]])
+ose_bob <- c(unlist(timeday_split[[3]]), 
+                    unlist(digits_split[[3]]),
+                    unlist(cap_split[[3]]),
+                    unlist(special_split[[3]]))
+variables <- c("time of day", "digits", "cappct", "special")
+
+compare_var <- tibble(variables, split_crit_bob, ose_bob) %>%
+  arrange(ose_bob)
+
+kable(compare_var, caption = "The comparison of OSE value of the best split in each variable",
+      col.names = c("Variable", "Split Point", "OSE")) %>%
+  kable_styling()
+```
+
+
+> Based on Table \@ref(tab:var-split), `cappct` produce the best split in the point 0.0095.
+
+## Question 3e
+
+**Make a plot of the Gini measure for impurity, against all values of $p$ (0-1), Overlay the OSE index. Compare the two measures, based on the worst and best $p$ for each.**
+
+**Answer** 
+
+The Gini measure could be defined as (Cook, 2021a):
+
+$$G = \sum_{k =1}^K \hat{p}_{mk}(1 - \hat{p}_{mk})$$
+
+Comparison of Gini and OSE against all values $p$ could be observed in the following figure. 
+
+```{r 3e, fig.cap="Comparison between Gini and OSE for each probability. The blue line displays the Gini index, while orange line displays the OSE index."}
+
+# create a vector of probability
+p <- seq(0.01, 0.99, 0.01)
+
+# compute Gini index
+gini <- (p*(1-p)) + ((1-p)*(p))
+
+# compute ose index
+ose <- 1 - p
+
+# create a data frame from these vectors
+dat <- tibble(p, gini, ose)
+
+# make the plot
+ggplot(dat, aes(x = p, y = gini)) +
+  geom_line(color = "blue") +
+  geom_line(aes(x = p, y = ose), color = "tomato") +
+  theme(aspect.ratio = 1)
+```
+
+In classification problem, the best split results $p$ equal to 0 or 1, while the worst results  $p$ equal to 0.5. Figure \@ref(fig:3e) shows that both Gini and OSE give the same value for the worst probability. Whereas, for the best $p$, Gini value is close to 0. This is different with OSE. Using OSE, the best $p$ is given with OSEs are either close to 0 or 1. 
+
+
+
+# Acknowledgment
+This report is made with `R` (R Core Team, 2020) and generated with `RMarkdown` (Allaire et al., 2020), with incorporating `bookdown` (Xie, 2020) and `knitr` (Xie, 2020). 
+The packages that are used in this report are `tidymodels` (Kuhn et al., 2020), `tidyverse` (Wickham et al., 2019), `discrim` (Kuhn, 2020), `MASS` (Venables & Ripley, 2002), `broom` (Robinson, Hayes, Couch, 2021), `rpart` (Therneau & Atkinson, 2019), `patchwork` (Pedersen, 2020), `caret` (Kuhn, 2020), `palmerpenguins` (Horst, Hill, Golman, 2020), `GGally` (Schloerke et al, 2020), `tourr` (Wickham, Cook, Hofmann, Buja, 2011), `matlib` (Friendly, Fox, Chalmers, 2020), `kableExtra` (Zhu, 2019), `spinifex` (Spyrison, Cook, 2021), `boot` (Davison & Hinkley, 1997; Canty & Ripley, 2020), and `plotly` (Sievert, 2020). 
+
+# References
+
+Canty, A., Ripley, B. (2020). boot: Bootstrap R (S-Plus) Functions. R package
+  version 1.3-25.
+
+Allaire JJ, et al. (2020). rmarkdown: Dynamic Documents for R. R package version 2.5. URL https://rmarkdown.rstudio.com.
+
+Analytics Vidhya. (2016). *A Practical Guide to Principal Component Analysis in R & Python*. https://www.analyticsvidhya.com/blog/2016/03/pca-practical-guide-principal-component-analysis-python/
+
+Buja, A., Lee, Y.S. (2001). *Data Mining Criteria for Tree-Based Regression and Classification*. https://repository.upenn.edu/cgi/viewcontent.cgi?article=1406&context=statistics_papers
+
+Cook, D. (2021a). *ETC3250/5250: Introduction to Machine Learning - Classification Trees Lecture Notes*.https://iml.numbat.space/lectures/lecture-06a#2 
+
+Cook, D. (2021b). *ETC3250/5250: Introduction to Machine Learning - Categorical Response: Discriminant analysis*. https://iml.numbat.space/lectures/lecture-04a#12
+
+Cook, D. (2021c). *ETC3250/5250: Introduction to Machine Learning - Dimension Reduction*.https://iml.numbat.space/lectures/lecture-04b#2
+
+Davison, A. C. & Hinkley, D. V. (1997) Bootstrap Methods and Their Applications. Cambridge
+  University Press, Cambridge. ISBN 0-521-57391-2
+
+Del Fiorre, J.M. and Jones, A. (2020). *The correct formula for covariance matrix in quadratic discriminant analysis (QDA)*. https://stats.stackexchange.com/questions/129062/what-is-the-correct-formula-for-covariance-matrix-in-quadratic-discriminant-anal
+
+Friendly, M., Fox, J., Chalmers, P. (2020). matlib: Matrix Functions for Teaching
+  and Learning Linear Algebra and Multivariate Statistics. R package version 0.9.4.
+  https://CRAN.R-project.org/package=matlib
+
+Hoare, J. (n.d). *How is Splitting Decided for Decision Trees?*. https://www.displayr.com/how-is-splitting-decided-for-decision-trees/
+
+Horst ,A M., Hill, A.P., Gorman, K.B. (2020). palmerpenguins: Palmer Archipelago (Antarctica)
+  penguin data. R package version 0.1.0. https://allisonhorst.github.io/palmerpenguins/
+
+James, G., Witten, D., Hastie, T., Tibshirani, R. (2013). An introduction to statistical learning : with applications in R. New York :Springer. https://www.statlearning.com/s/ISLR-Seventh-Printing-xwa7.pdf
+
+Lauer, F. (2014). *Linear and Quadratic Discriminant Analysis (LDA & QDA)*. https://mlweb.loria.fr/book/en/lda.html
+
+
+Kuhn et al., (2020). Tidymodels: a collection of packages for modeling and machine
+  learning using tidyverse principles. https://www.tidymodels.org
+
+Kuhn, M (2020). caret: Classification and Regression Training. R package version 6.0-86.
+  https://CRAN.R-project.org/package=caret
+  
+Kuhn, M. (2020). discrim: Model Wrappers for Discriminant Analysis. R package version
+  0.1.1. https://CRAN.R-project.org/package=discrim
+  
+
+Pedersen, T.L. (2020). patchwork: The Composer of Plots. R package version 1.0.1.
+  https://CRAN.R-project.org/package=patchwork
+  
+R Core Team (2020). R: A language and environment for statistical computing. R Foundation
+  for Statistical Computing, Vienna, Austria. URL https://www.R-project.org/.
+  
+Robinson, D., Hayes, A., Couch, S. (2021). broom: Convert Statistical Objects into
+  Tidy Tibbles. R package version 0.7.5. https://CRAN.R-project.org/package=broom
+  
+Sievert, C. (2020). Interactive Web-Based Data Visualization with R, plotly, and shiny. Chapman
+  and Hall/CRC Florida.
+
+
+Schloerke, B., et al. (2020). GGally: Extension to 'ggplot2'.
+  https://ggobi.github.io/ggally, https://github.com/ggobi/ggally.
+  
+
+Spyrison, N., Cook, D. (2021). spinifex: Manual Tours, Manual Control of
+  Dynamic Projections of Numeric Multivariate Data. R package version 0.2.8.
+  https://CRAN.R-project.org/package=spinifex
+
+  
+Therneau, T., Atkinson, B. (2019). rpart: Recursive Partitioning and Regression
+  Trees. R package version 4.1-15. https://CRAN.R-project.org/package=rpart
+
+Venables, W. N. & Ripley, B. D. (2002) Modern Applied Statistics with
+  S. Fourth Edition. Springer, New York. ISBN 0-387-95457-0
+
+Wickham, H., Cook, D., Hofmann, H., Buja, A. (2011). tourr: An R Package for
+  Exploring Multivariate Data with Projections. Journal of Statistical Software, 40(2),
+  1-18. URL http://www.jstatsoft.org/v40/i02/.
+  
+Wickham, H. (2016). ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag: New York.
+
+Wickham et al., (2019). Welcome to the tidyverse. Journal of Open Source Software, 4(43),
+  1686, https://doi.org/10.21105/joss.01686
+
+Xie, Y. (2020). knitr: A General-Purpose Package for Dynamic Report Generation in R. R
+  package version 1.30.
+  
+Xie, Y. (2020). bookdown: Authoring Books and Technical Documents with R Markdown. R
+  package version 0.20.
+  
+Zhu, H. (2019). kableExtra: Construct Complex Table with 'kable' and Pipe Syntax. R
+  package version 1.1.0. https://CRAN.R-project.org/package=kableExtra
+
